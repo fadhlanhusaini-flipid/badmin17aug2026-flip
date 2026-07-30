@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🏸 Liga Badminton</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f8fafc}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+input[type=number]{-moz-appearance:textfield}
+table{border-collapse:collapse;width:100%}
+.sb{border:none;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700;cursor:pointer;transition:all .15s}
+.sb:hover{transform:scale(1.1)}
+.save-indicator{position:fixed;bottom:14px;right:14px;background:#1e293b;color:#fff;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:600;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9999}
+.save-indicator.show{opacity:1}
+</style>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.9/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<div class="save-indicator" id="saveIndicator">💾 Tersimpan</div>
+<script type="text/babel">
+const { useState, useMemo, useEffect, useCallback, useRef } = React;
+
+/* ══ THEME COLORS ══ */
+const C = {
+  blue:"#2563eb", blueBg:"#eff6ff",
+  pink:"#db2777", pinkBg:"#fdf2f8",
+  green:"#16a34a", greenBg:"#f0fdf4",
+  gold:"#d97706", goldBg:"#fffbeb",
+  gray:"#64748b", grayBg:"#f8fafc",
+  dark:"#1e293b", white:"#fff",
+  border:"#e2e8f0",
+  gradeA:"#7c3aed", gradeABg:"#f5f3ff",
+  gradeB:"#0891b2", gradeBBg:"#ecfeff",
+  court:["#2563eb","#16a34a","#ea580c","#7c3aed"],
+  courtBg:["#eff6ff","#f0fdf4","#fff7ed","#f5f3ff"],
+  ko:"#dc2626", koBg:"#fef2f2"
+};
+
+/* ══ INITIAL PLAYER DATA ══ */
+const INIT_PA = ["Eqi","Anjar","Galih Putra Laksana Adi","Triyono","Andri Muljadi","Rekam","Fadhlan Hussaini"];
+const INIT_PB = ["Johannes Sigalingging","Aubert Oktaviantono","Ari","Eri Wandri","Rizki Pratama","Herdi Agusthio","Gilang R. Mustadjab","Rio","Asqolani","Baron","Fathan Mustaqim"];
+const INIT_W  = ["Tiffani","Ninik","Fildzah","Cipi","Bela","Endang Kusumah","Utari Purwo","Fitri Ameliasari","Violentine","Ajeng Rachma F.","Aulia Ramadhan","Zahra Maharani","Salsabilla K.","Ayu Santika"];
+const STORAGE_KEY = "liga-badminton-v1";
+
+/* ══ PERSISTENCE HELPERS ══ */
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveState(state) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    showSaveIndicator();
+  } catch (e) {
+    console.warn("localStorage save failed:", e);
+  }
+}
+
+function showSaveIndicator() {
+  const el = document.getElementById("saveIndicator");
+  if (!el) return;
+  el.classList.add("show");
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove("show"), 1800);
+}
+
+/* ══ PURE LOGIC HELPERS ══ */
+function shuffle(arr) {
+  const b = [...arr];
+  for (let i = b.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [b[i], b[j]] = [b[j], b[i]];
+  }
+  return b;
+}
+
+function genRoundRobin(teams, pool, cat) {
+  const matches = [];
+  for (let i = 0; i < teams.length; i++) {
+    for (let j = i + 1; j < teams.length; j++) {
+      matches.push({
+        id: `${cat}-${pool}-${i}-${j}`,
+        pool, cat, phase: "group",
+        aLabel: teams[i].label, bLabel: teams[j].label,
+        s1a:null, s1b:null, s2a:null, s2b:null, s3a:null, s3b:null
+      });
+    }
+  }
+  return matches;
+}
+
+function getMatchResult(match) {
+  if (!match) return null;
+  const parse = v => parseInt(v);
+  const a1 = parse(match.s1a), b1 = parse(match.s1b);
+  const a2 = parse(match.s2a), b2 = parse(match.s2b);
+  if ([a1, b1, a2, b2].some(isNaN)) return null;
+  let setsA = 0, setsB = 0;
+  const totalPtsA = a1 + a2, totalPtsB = b1 + b2;
+  if (a1 > b1) setsA++; else setsB++;
+  if (a2 > b2) setsA++; else setsB++;
+  if (setsA === 2) return { winner:"a", setsA:2, setsB, totalPtsA, totalPtsB };
+  if (setsB === 2) return { winner:"b", setsA, setsB:2, totalPtsA, totalPtsB };
+  const a3 = parse(match.s3a), b3 = parse(match.s3b);
+  if (isNaN(a3) || isNaN(b3)) return null;
+  return a3 > b3
+    ? { winner:"a", setsA:2, setsB:1, totalPtsA: totalPtsA+a3, totalPtsB: totalPtsB+b3 }
+    : { winner:"b", setsA:1, setsB:2, totalPtsA: totalPtsA+a3, totalPtsB: totalPtsB+b3 };
+}
+
+function needsThirdSet(match) {
+  const vals = [match.s1a, match.s1b, match.s2a, match.s2b].map(x => parseInt(x));
+  if (vals.some(isNaN)) return false;
+  let a = 0, b = 0;
+  if (vals[0] > vals[1]) a++; else b++;
+  if (vals[2] > vals[3]) a++; else b++;
+  return a === 1 && b === 1;
+}
+
+function calcStandings(teams, matches) {
+  const standings = {};
+  teams.forEach(t => {
+    standings[t.label] = { label:t.label, played:0, w:0, l:0, sw:0, sl:0, pf:0, pa:0, pts:0 };
+  });
+  matches.forEach(match => {
+    const result = getMatchResult(match);
+    if (!result) return;
+    const entryA = standings[match.aLabel];
+    const entryB = standings[match.bLabel];
+    if (!entryA || !entryB) return;
+    entryA.played++; entryB.played++;
+    entryA.sw += result.setsA; entryA.sl += result.setsB;
+    entryB.sw += result.setsB; entryB.sl += result.setsA;
+    entryA.pf += result.totalPtsA; entryA.pa += result.totalPtsB;
+    entryB.pf += result.totalPtsB; entryB.pa += result.totalPtsA;
+    if (result.winner === "a") {
+      entryA.w++; entryA.pts += 2; entryB.l++; entryB.pts += 1;
+    } else {
+      entryB.w++; entryB.pts += 2; entryA.l++; entryA.pts += 1;
+    }
+  });
+  return Object.values(standings).sort((a, b) =>
+    (b.pts - a.pts) ||
+    ((b.sw - b.sl) - (a.sw - a.sl)) ||
+    ((b.pf - b.pa) - (a.pf - a.pa)) ||
+    (b.pf - a.pf)
+  );
+}
+
+/* ══ SMART SCHEDULER ══ */
+function pickAvailable(arr, n, usedSet) {
+  const out = [];
+  for (let i = 0; i < arr.length && out.length < n; i++) {
+    if (!usedSet.has(arr[i].aLabel) && !usedSet.has(arr[i].bLabel)) {
+      const match = arr.splice(i, 1)[0];
+      out.push(match);
+      usedSet.add(match.aLabel);
+      usedSet.add(match.bLabel);
+      i--;
+    }
+  }
+  return out;
+}
+
+function buildSmartSchedule(putriMatches, putraMatches) {
+  const remainingPutri = [...putriMatches];
+  const remainingPutra = [...putraMatches];
+  const rounds = [];
+  while (remainingPutri.length > 0 || remainingPutra.length > 0) {
+    const round = [];
+    const usedPutri = new Set(), usedPutra = new Set();
+    if (remainingPutra.length > 0 && remainingPutri.length > 0) {
+      round.push(...pickAvailable(remainingPutri, 2, usedPutri));
+      round.push(...pickAvailable(remainingPutra, 2, usedPutra));
+      if (round.length < 4) round.push(...pickAvailable(remainingPutri, 4 - round.length, usedPutri));
+      if (round.length < 4) round.push(...pickAvailable(remainingPutra, 4 - round.length, usedPutra));
+    } else if (remainingPutri.length > 0) {
+      round.push(...pickAvailable(remainingPutri, 4, usedPutri));
+    } else {
+      round.push(...pickAvailable(remainingPutra, 4, usedPutra));
+    }
+    rounds.push(round);
+  }
+  return rounds;
+}
+
+/* ══ UI COMPONENTS ══ */
+function GradeBadge({ grade, small }) {
+  return (
+    <span style={{
+      display:"inline-block", padding: small ? "0 4px" : "1px 6px",
+      borderRadius:4, fontSize: small ? 8 : 10, fontWeight:800,
+      background: grade === "A" ? C.gradeA : C.gradeB,
+      color: C.white, lineHeight:"16px"
+    }}>{grade}</span>
+  );
+}
+
+function CategoryBadge({ cat }) {
+  const isPutra = cat === "putra";
+  return (
+    <span style={{
+      padding:"1px 7px", borderRadius:99, fontSize:10, fontWeight:700,
+      background: isPutra ? C.blueBg : C.pinkBg,
+      color: isPutra ? C.blue : C.pink,
+      border: `1px solid ${isPutra ? C.blue : C.pink}22`,
+      textTransform:"uppercase", letterSpacing:.4
+    }}>{isPutra ? "PA" : "PI"}</span>
+  );
+}
+
+function KnockoutBadge() {
+  return (
+    <span style={{
+      padding:"1px 6px", borderRadius:99, fontSize:9, fontWeight:800,
+      background:C.koBg, color:C.ko, border:`1px solid ${C.ko}30`
+    }}>KNOCKOUT</span>
+  );
+}
+
+function ScoreInput({ value, onChange }) {
+  return (
+    <input
+      type="number" min={0} max={15}
+      value={value != null ? value : ""}
+      onChange={e => onChange(e.target.value === "" ? null : e.target.value)}
+      style={{
+        width:30, padding:"3px 1px", textAlign:"center",
+        border:`1.5px solid ${C.border}`, borderRadius:5,
+        fontSize:12, fontWeight:700, color:C.dark, outline:"none",
+        background: value != null ? C.goldBg : C.white
+      }}
+      onFocus={e => { e.target.style.borderColor = C.blue; }}
+      onBlur={e => { e.target.style.borderColor = C.border; }}
+    />
+  );
+}
+
+function SetScoreRow({ label, scoreA, scoreB, onChangeA, onChangeB }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:2, marginBottom:1 }}>
+      <span style={{ fontSize:8, color:C.gray, width:14, textAlign:"right" }}>{label}</span>
+      <ScoreInput value={scoreA} onChange={onChangeA} />
+      <span style={{ color:C.gray, fontSize:9 }}>-</span>
+      <ScoreInput value={scoreB} onChange={onChangeB} />
+    </div>
+  );
+}
+
+function CourtCard({ match, courtIndex, onScoreChange, getPairInfo }) {
+  if (!match) {
+    return (
+      <div style={{
+        flex:"1 1 150px", border:`1.5px dashed ${C.border}`, borderRadius:10,
+        padding:10, textAlign:"center", color:"#cbd5e1", fontSize:11,
+        minHeight:80, display:"flex", alignItems:"center", justifyContent:"center"
+      }}>
+        Lap. {courtIndex + 1}
+      </div>
+    );
+  }
+  const result = getMatchResult(match);
+  const isDone = !!result;
+  const winnerIsA = result && result.winner === "a";
+  const winnerIsB = result && result.winner === "b";
+  const showSet3 = needsThirdSet(match);
+  const pairA = getPairInfo(match.aLabel);
+  const pairB = getPairInfo(match.bLabel);
+  const isKO = match.phase === "knockout";
+
+  return (
+    <div style={{
+      flex:"1 1 150px", minWidth:0,
+      border:`1.5px solid ${isDone ? C.green : isKO ? C.ko : C.court[courtIndex]}`,
+      borderRadius:10, padding:"7px 9px",
+      background: isDone ? C.greenBg : isKO ? C.koBg : C.courtBg[courtIndex]
+    }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4, gap:3, flexWrap:"wrap" }}>
+        <span style={{ fontSize:10, fontWeight:800, color: isKO ? C.ko : C.court[courtIndex] }}>Lap. {courtIndex + 1}</span>
+        <div style={{ display:"flex", gap:3 }}>
+          {isKO && <KnockoutBadge />}
+          <CategoryBadge cat={match.cat} />
+        </div>
+      </div>
+      {isKO && match.koLabel && (
+        <div style={{ fontSize:9, fontWeight:700, color:C.ko, marginBottom:2 }}>{match.koLabel}</div>
+      )}
+      <div style={{ display:"flex", alignItems:"center", gap:3, marginBottom:1 }}>
+        <span style={{ fontSize:11, fontWeight: winnerIsA ? 800 : 600, color: winnerIsA ? C.green : C.dark }}>
+          {match.aLabel || "TBD"}
+        </span>
+        {winnerIsA && <span style={{ fontSize:9, color:C.green }}>✓</span>}
+      </div>
+      {pairA && <div style={{ fontSize:8, color:C.gray, marginBottom:2, lineHeight:1.2 }}>{pairA.p1} & {pairA.p2}</div>}
+      <SetScoreRow label="S1" scoreA={match.s1a} scoreB={match.s1b}
+        onChangeA={v => onScoreChange(match.id, "s1a", v)}
+        onChangeB={v => onScoreChange(match.id, "s1b", v)} />
+      <SetScoreRow label="S2" scoreA={match.s2a} scoreB={match.s2b}
+        onChangeA={v => onScoreChange(match.id, "s2a", v)}
+        onChangeB={v => onScoreChange(match.id, "s2b", v)} />
+      {showSet3 && (
+        <SetScoreRow label="S3" scoreA={match.s3a} scoreB={match.s3b}
+          onChangeA={v => onScoreChange(match.id, "s3a", v)}
+          onChangeB={v => onScoreChange(match.id, "s3b", v)} />
+      )}
+      <div style={{ display:"flex", alignItems:"center", gap:3, marginTop:2 }}>
+        <span style={{ fontSize:11, fontWeight: winnerIsB ? 800 : 600, color: winnerIsB ? C.green : C.dark }}>
+          {match.bLabel || "TBD"}
+        </span>
+        {winnerIsB && <span style={{ fontSize:9, color:C.green }}>✓</span>}
+      </div>
+      {pairB && <div style={{ fontSize:8, color:C.gray, lineHeight:1.2 }}>{pairB.p1} & {pairB.p2}</div>}
+    </div>
+  );
+}
+
+function StandingsTable({ title, color, colorBg, teams, matches, pairMap, showMedal, showQualify }) {
+  const standings = calcStandings(teams, matches);
+  const medals = ["🥇","🥈","🥉"];
+  return (
+    <div style={{ border:`1px solid ${C.border}`, borderRadius:10, overflow:"hidden" }}>
+      <div style={{ background:colorBg, padding:"6px 12px", borderBottom:`1px solid ${C.border}` }}>
+        <span style={{ fontWeight:700, fontSize:13, color }}>{title}</span>
+      </div>
+      <div style={{ overflowX:"auto" }}>
+        <table style={{ fontSize:11, minWidth:480 }}>
+          <thead>
+            <tr style={{ background:C.grayBg }}>
+              {["#","ID","Pemain","M","W","L","SW","SL","PF","PA","+/-","Pts"].map(h => (
+                <th key={h} style={{
+                  padding:"5px 3px",
+                  textAlign: (h==="ID" || h==="Pemain") ? "left" : "center",
+                  fontWeight:600, color:C.gray,
+                  borderBottom:`1px solid ${C.border}`, fontSize:9
+                }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {standings.map((entry, i) => {
+              const pair = pairMap ? pairMap[entry.label] : null;
+              const isQualified = showQualify && i < 2 && entry.played > 0;
+              const isMedal = showMedal && i < 3 && entry.played > 0;
+              return (
+                <tr key={entry.label} style={{ background: isQualified ? C.greenBg : isMedal ? C.goldBg : i%2 ? C.grayBg : "transparent" }}>
+                  <td style={{ padding:"5px 3px", textAlign:"center", fontSize:12 }}>
+                    {isMedal ? medals[i] : isQualified
+                      ? <span style={{ fontSize:9, background:C.green, color:C.white, borderRadius:3, padding:"1px 4px" }}>Q</span>
+                      : i + 1}
+                  </td>
+                  <td style={{ padding:"5px 3px", fontWeight:700, whiteSpace:"nowrap" }}>{entry.label}</td>
+                  <td style={{ padding:"5px 3px", fontSize:9, color:C.gray, whiteSpace:"nowrap" }}>
+                    {pair ? `${pair.p1} & ${pair.p2}` : "-"}
+                  </td>
+                  <td style={{ padding:"5px 3px", textAlign:"center" }}>{entry.played}</td>
+                  <td style={{ padding:"5px 3px", textAlign:"center", color:C.green, fontWeight:700 }}>{entry.w}</td>
+                  <td style={{ padding:"5px 3px", textAlign:"center", color:"#dc2626" }}>{entry.l}</td>
+                  <td style={{ padding:"5px 3px", textAlign:"center" }}>{entry.sw}</td>
+                  <td style={{ padding:"5px 3px", textAlign:"center" }}>{entry.sl}</td>
+                  <td style={{ padding:"5px 3px", textAlign:"center" }}>{entry.pf}</td>
+                  <td style={{ padding:"5px 3px", textAlign:"center" }}>{entry.pa}</td>
+                  <td style={{ padding:"5px 3px", textAlign:"center", fontWeight:600, color: entry.pf-entry.pa>0 ? C.green : entry.pf-entry.pa<0 ? "#dc2626" : C.gray }}>
+                    {(entry.pf - entry.pa > 0 ? "+" : "") + (entry.pf - entry.pa)}
+                  </td>
+                  <td style={{ padding:"5px 3px", textAlign:"center", fontWeight:800, fontSize:13 }}>{entry.pts}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ══ MAIN APP ══ */
+const NAV_STEPS = ["input","draw","schedule","standings","knockout","rules"];
+const NAV_LABELS = ["✏️ Pemain","🎲 Kocokan","📋 Jadwal","🏆 Klasemen","⚔️ Knockout","📖 Aturan"];
+
+function App() {
+  /* ── Load persisted state or start fresh ── */
+  const savedState = useMemo(() => loadState(), []);
+
+  const [step, setStep]           = useState(savedState?.step || "input");
+  const [putraGradeA, setPutraA]  = useState(savedState?.putraGradeA || INIT_PA.map(n => ({ name: n })));
+  const [putraGradeB, setPutraB]  = useState(savedState?.putraGradeB || INIT_PB.map(n => ({ name: n })));
+  const [putriList, setPutriList] = useState(savedState?.putriList || INIT_W.map(n => ({ name: n })));
+  const [putraPairs, setPutraPairs]   = useState(savedState?.putraPairs || null);
+  const [putriPairs, setPutriPairs]   = useState(savedState?.putriPairs || null);
+  const [pairMap, setPairMap]         = useState(savedState?.pairMap || {});
+  const [groups, setGroups]           = useState(savedState?.groups || null);
+  const [rounds, setRounds]           = useState(savedState?.rounds || []);
+  const [allMatches, setAllMatches]   = useState(savedState?.allMatches || []);
+  const [knockoutMatches, setKnockout]= useState(savedState?.knockoutMatches || null);
+  const [showAnim, setShowAnim]       = useState(false);
+
+  /* ── Persist on every state change ── */
+  const saveTimeout = useRef(null);
+  useEffect(() => {
+    if (saveTimeout.current) clearTimeout(saveTimeout.current);
+    saveTimeout.current = setTimeout(() => {
+      saveState({ step, putraGradeA, putraGradeB, putriList, putraPairs, putriPairs, pairMap, groups, rounds, allMatches, knockoutMatches });
+    }, 400);
+  }, [step, putraGradeA, putraGradeB, putriList, putraPairs, putriPairs, pairMap, groups, rounds, allMatches, knockoutMatches]);
+
+  /* ── Player editor helpers ── */
+  const updateName = (setter, idx, val) => setter(prev => prev.map((x, j) => j === idx ? { ...x, name: val } : x));
+  const movePlayerToB = idx => {
+    const player = putraGradeA[idx];
+    setPutraA(prev => prev.filter((_, j) => j !== idx));
+    setPutraB(prev => [...prev, player]);
+  };
+  const movePlayerToA = idx => {
+    const player = putraGradeB[idx];
+    setPutraB(prev => prev.filter((_, j) => j !== idx));
+    setPutraA(prev => [...prev, player]);
+  };
+
+  /* ── Draw / generate tournament ── */
+  const doDraw = () => {
+    if (putraGradeA.length + putraGradeB.length !== 18) {
+      alert("Total putra harus 18!"); return;
+    }
+    const countA = putraGradeA.length, countB = putraGradeB.length;
+    const shuffledA = shuffle([...putraGradeA]);
+    const shuffledB = shuffle([...putraGradeB]);
+    const minPaired = Math.min(countA, countB);
+    const pairs = [];
+
+    // Pair A with B
+    for (let i = 0; i < minPaired; i++) {
+      pairs.push({ label:`P${i+1}`, p1:shuffledA[i].name, p2:shuffledB[i].name, g1:"A", g2:"B", idx:i });
+    }
+    // Pair remaining same-grade players
+    let idx = minPaired;
+    const bigger = countA > countB ? shuffledA : shuffledB;
+    const bigGrade = countA > countB ? "A" : "B";
+    for (let i = minPaired; i + 1 < (countA > countB ? countA : countB); i += 2) {
+      pairs.push({ label:`P${idx+1}`, p1:bigger[i].name, p2:bigger[i+1].name, g1:bigGrade, g2:bigGrade, idx });
+      idx++;
+    }
+    setPutraPairs(pairs);
+
+    // Putri pairs
+    const shuffledW = shuffle([...putriList]);
+    const wPairs = [];
+    for (let i = 0; i < 7; i++) {
+      wPairs.push({ label:`W${i+1}`, p1:shuffledW[i*2].name, p2:shuffledW[i*2+1].name, idx:i });
+    }
+    setPutriPairs(wPairs);
+
+    // Pair map for display
+    const newPairMap = {};
+    pairs.forEach(p => { newPairMap[p.label] = { p1:p.p1, p2:p.p2, g1:p.g1, g2:p.g2 }; });
+    wPairs.forEach(p => { newPairMap[p.label] = { p1:p.p1, p2:p.p2 }; });
+    setPairMap(newPairMap);
+
+    // Group draw: shuffle pairs into two groups
+    const shuffledPairs = shuffle([...pairs]);
+    const groupA = shuffledPairs.slice(0, 5).map(p => ({ idx:p.idx, label:p.label }));
+    const groupB = shuffledPairs.slice(5).map(p => ({ idx:p.idx, label:p.label }));
+    const allWTeams = shuffle([...wPairs]).map(p => ({ idx:p.idx, label:p.label }));
+    setGroups({ putraA:groupA, putraB:groupB, putri:allWTeams });
+
+    // Generate round-robin matches
+    const matchesA  = genRoundRobin(groupA, "A", "putra");
+    const matchesB  = genRoundRobin(groupB, "B", "putra");
+    const matchesW  = genRoundRobin(allWTeams, "RR", "putri");
+
+    // Reserve 4 putri matches for KO round interleaving
+    const putriPool = [...matchesW];
+    const koWave1 = pickAvailable(putriPool, 2, new Set());
+    const koWave2 = pickAvailable(putriPool, 2, new Set());
+
+    // Smart schedule (balanced putri+putra per round)
+    const groupRounds = buildSmartSchedule(putriPool, [...matchesA, ...matchesB]);
+
+    // Split rounds evenly across 2 days
+    let totalGroupMatches = 0;
+    groupRounds.forEach(r => totalGroupMatches += r.length);
+    const targetDay1 = Math.ceil(totalGroupMatches / 2);
+    let cumulative = 0, splitAt = 0;
+    for (let i = 0; i < groupRounds.length; i++) {
+      cumulative += groupRounds[i].length;
+      if (cumulative >= targetDay1) { splitAt = i + 1; break; }
+    }
+    const day1Rounds = groupRounds.slice(0, splitAt);
+    const day2Rounds = groupRounds.slice(splitAt);
+
+    // KO match templates
+    const emptyKO = () => ({ s1a:null, s1b:null, s2a:null, s2b:null, s3a:null, s3b:null });
+    const sf1  = { id:"ko-sf1", cat:"putra", pool:"KO", phase:"knockout", koLabel:"Semifinal 1",       aLabel:"", bLabel:"", ...emptyKO() };
+    const sf2  = { id:"ko-sf2", cat:"putra", pool:"KO", phase:"knockout", koLabel:"Semifinal 2",       aLabel:"", bLabel:"", ...emptyKO() };
+    const ko3  = { id:"ko-3rd", cat:"putra", pool:"KO", phase:"knockout", koLabel:"Perebutan Juara 3", aLabel:"", bLabel:"", ...emptyKO() };
+    const koF  = { id:"ko-fin", cat:"putra", pool:"KO", phase:"knockout", koLabel:"🏆 FINAL",          aLabel:"", bLabel:"", ...emptyKO() };
+    setKnockout({ sf1, sf2, third:ko3, final:koF });
+
+    // Assemble all rounds with match numbers and day labels
+    let matchNo = 1;
+    const collectedMatches = [];
+    const tagRounds = (rds, day) => rds.map(rd => ({
+      slots: rd.map(m => { const o = { ...m, no:matchNo++, day }; collectedMatches.push(o); return o; }),
+      day
+    }));
+    const tagKORound = (slots, day) => ({
+      slots: slots.map(m => { const o = { ...m, no:matchNo++, day }; collectedMatches.push(o); return o; }),
+      day, isKO: true
+    });
+
+    const assembledRounds = [
+      ...tagRounds(day1Rounds, 1),
+      ...tagRounds(day2Rounds, 2),
+      tagKORound([sf1, sf2, ...koWave1], 2),
+      tagKORound([ko3, koF,  ...koWave2], 2),
+    ];
+    setRounds(assembledRounds);
+    setAllMatches(collectedMatches);
+    setShowAnim(true);
+    setStep("draw");
+    setTimeout(() => setShowAnim(false), 2000);
+  };
+
+  const handleRedraw = () => {
+    if (confirm("Acak ulang? Semua skor akan direset.")) doDraw();
+  };
+
+  const handleResetAll = () => {
+    if (confirm("Reset semua data termasuk pemain ke default? Tidak bisa dibatalkan!")) {
+      localStorage.removeItem(STORAGE_KEY);
+      window.location.reload();
+    }
+  };
+
+  /* ── Score update: syncs allMatches, rounds, and knockoutMatches ── */
+  const handleScoreChange = useCallback((matchId, field, value) => {
+    setAllMatches(prev => prev.map(m => m.id === matchId ? { ...m, [field]:value } : m));
+    setRounds(prev => prev.map(r => ({
+      ...r,
+      slots: r.slots.map(m => m.id === matchId ? { ...m, [field]:value } : m)
+    })));
+    if (matchId.startsWith("ko-")) {
+      setKnockout(prev => {
+        if (!prev) return prev;
+        const updated = { ...prev };
+        for (const key in updated) {
+          if (updated[key] && updated[key].id === matchId) {
+            updated[key] = { ...updated[key], [field]:value };
+          }
+        }
+        return updated;
+      });
+    }
+  }, []);
+
+  const getPairInfo = useCallback(label => pairMap[label] || null, [pairMap]);
+
+  /* ── Derived data ── */
+  const groupMatches = useMemo(() => allMatches.filter(m => m.phase === "group"), [allMatches]);
+
+  const standingsA = useMemo(() =>
+    groups ? calcStandings(groups.putraA, groupMatches.filter(m => m.cat==="putra" && m.pool==="A")) : [],
+    [groups, groupMatches]);
+
+  const standingsB = useMemo(() =>
+    groups ? calcStandings(groups.putraB, groupMatches.filter(m => m.cat==="putra" && m.pool==="B")) : [],
+    [groups, groupMatches]);
+
+  const allGroupPutraDone = useMemo(() => {
+    const putraGroupMatches = groupMatches.filter(m => m.cat === "putra");
+    return putraGroupMatches.length > 0 && putraGroupMatches.every(m => getMatchResult(m) !== null);
+  }, [groupMatches]);
+
+  // Compute live KO bracket (fills labels from standings, propagates SF winners)
+  const liveKO = useMemo(() => {
+    if (!knockoutMatches) return null;
+    if (!allGroupPutraDone || standingsA.length < 2 || standingsB.length < 2) return knockoutMatches;
+    const ko = { ...knockoutMatches };
+    ko.sf1 = { ...ko.sf1, aLabel:standingsA[0].label, bLabel:standingsB[1].label };
+    ko.sf2 = { ...ko.sf2, aLabel:standingsB[0].label, bLabel:standingsA[1].label };
+    const resSF1 = getMatchResult(ko.sf1);
+    const resSF2 = getMatchResult(ko.sf2);
+    if (resSF1 && resSF2) {
+      ko.third = { ...ko.third,
+        aLabel: resSF1.winner === "a" ? ko.sf1.bLabel : ko.sf1.aLabel,
+        bLabel: resSF2.winner === "a" ? ko.sf2.bLabel : ko.sf2.aLabel
+      };
+      ko.final = { ...ko.final,
+        aLabel: resSF1.winner === "a" ? ko.sf1.aLabel : ko.sf1.bLabel,
+        bLabel: resSF2.winner === "a" ? ko.sf2.aLabel : ko.sf2.bLabel
+      };
+    } else {
+      ko.third = { ...ko.third, aLabel:"", bLabel:"" };
+      ko.final = { ...ko.final, aLabel:"", bLabel:"" };
+    }
+    return ko;
+  }, [knockoutMatches, allGroupPutraDone, standingsA, standingsB]);
+
+  // Inject live KO data into the rounds display
+  const displayRounds = useMemo(() => {
+    if (!liveKO) return rounds;
+    return rounds.map(r => {
+      if (!r.isKO) return r;
+      return {
+        ...r,
+        slots: r.slots.map(m => {
+          if (m.id === "ko-sf1") return { ...m, ...liveKO.sf1 };
+          if (m.id === "ko-sf2") return { ...m, ...liveKO.sf2 };
+          if (m.id === "ko-3rd") return { ...m, ...liveKO.third };
+          if (m.id === "ko-fin") return { ...m, ...liveKO.final };
+          return m;
+        })
+      };
+    });
+  }, [rounds, liveKO]);
+
+  const completedGroupMatches = groupMatches.filter(m => getMatchResult(m)).length;
+  const totalGroupMatches = groupMatches.length;
+
+  /* ══ RENDER ══ */
+  return (
+    <div style={{ maxWidth:780, margin:"0 auto", padding:"20px 10px", color:C.dark }}>
+
+      {/* Header */}
+      <div style={{ textAlign:"center", marginBottom:14 }}>
+        <h1 style={{ fontSize:20, fontWeight:800, margin:0 }}>🏸 Liga Badminton</h1>
+        <p style={{ fontSize:11, color:C.gray, margin:"3px 0" }}>4 Lapangan • 2×11 Rally Point • 20:00–22:00</p>
+      </div>
+
+      {/* Navigation tabs */}
+      <div style={{ display:"flex", gap:2, marginBottom:14, background:"#f1f5f9", borderRadius:9, padding:3, overflowX:"auto" }}>
+        {NAV_STEPS.map((s, i) => {
+          const disabled = !putraPairs && i > 0;
+          return (
+            <button key={s} onClick={() => !disabled && setStep(s)} style={{
+              flex:"1 0 auto", padding:"6px 3px", border:"none", borderRadius:7,
+              cursor: disabled ? "default" : "pointer", fontSize:10,
+              fontWeight: step === s ? 700 : 500,
+              background: step === s ? C.white : "transparent",
+              color: disabled ? "#cbd5e1" : step === s ? C.dark : C.gray,
+              boxShadow: step === s ? "0 1px 3px rgba(0,0,0,0.07)" : "none",
+              whiteSpace:"nowrap"
+            }}>{NAV_LABELS[i]}</button>
+          );
+        })}
+      </div>
+
+      {/* ─── INPUT TAB ─── */}
+      {step === "input" && (
+        <div>
+          <div style={{ background:C.goldBg, border:`1px solid ${C.gold}30`, borderRadius:9, padding:"8px 12px", marginBottom:14, fontSize:12 }}>
+            💡 Klik <strong>→B</strong> / <strong>A←</strong> untuk pindah grade. Grade A dipasangkan acak dengan B, sisa sesama grade.
+          </div>
+          <h3 style={{ fontSize:14, margin:"0 0 8px", color:C.blue }}>🔵 Ganda Putra — {putraGradeA.length + putraGradeB.length} Pemain</h3>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:6 }}>
+            {/* Grade A */}
+            <div style={{ flex:"1 1 240px" }}>
+              <div style={{ fontSize:11, fontWeight:700, color:C.gradeA, marginBottom:4 }}>
+                <GradeBadge grade="A" /> Grade A ({putraGradeA.length})
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+                {putraGradeA.map((p, i) => (
+                  <div key={i} style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 6px", borderRadius:7, background:C.gradeABg, border:`1px solid ${C.border}` }}>
+                    <GradeBadge grade="A" small />
+                    <input type="text" value={p.name} onChange={e => updateName(setPutraA, i, e.target.value)}
+                      style={{ flex:1, border:`1px solid ${C.border}`, borderRadius:5, padding:"4px 6px", fontSize:12, outline:"none", minWidth:0, background:C.white }} />
+                    <button className="sb" onClick={() => movePlayerToB(i)} style={{ background:C.gradeB, color:C.white }}>→B</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* Grade B */}
+            <div style={{ flex:"1 1 240px" }}>
+              <div style={{ fontSize:11, fontWeight:700, color:C.gradeB, marginBottom:4 }}>
+                <GradeBadge grade="B" /> Grade B ({putraGradeB.length})
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+                {putraGradeB.map((p, i) => (
+                  <div key={i} style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 6px", borderRadius:7, background:C.gradeBBg, border:`1px solid ${C.border}` }}>
+                    <button className="sb" onClick={() => movePlayerToA(i)} style={{ background:C.gradeA, color:C.white }}>A←</button>
+                    <GradeBadge grade="B" small />
+                    <input type="text" value={p.name} onChange={e => updateName(setPutraB, i, e.target.value)}
+                      style={{ flex:1, border:`1px solid ${C.border}`, borderRadius:5, padding:"4px 6px", fontSize:12, outline:"none", minWidth:0, background:C.white }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div style={{ fontSize:11, color:C.gray, marginBottom:14, textAlign:"center" }}>
+            Pair A+B: <strong>{Math.min(putraGradeA.length, putraGradeB.length)}</strong> &nbsp;|&nbsp;
+            Pair {putraGradeA.length >= putraGradeB.length ? "A+A" : "B+B"}: <strong>{Math.floor(Math.abs(putraGradeA.length - putraGradeB.length) / 2)}</strong> &nbsp;|&nbsp;
+            Total: <strong>{Math.min(putraGradeA.length, putraGradeB.length) + Math.floor(Math.abs(putraGradeA.length - putraGradeB.length) / 2)}</strong> pasang
+            {(putraGradeA.length + putraGradeB.length) % 2 !== 0 && <span style={{ color:C.ko }}> ⚠️ Total ganjil!</span>}
+          </div>
+
+          <h3 style={{ fontSize:14, margin:"0 0 8px", color:C.pink }}>🔴 Ganda Putri — 14 Pemain</h3>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:18 }}>
+            {[0, 7].map(start => (
+              <div key={start} style={{ flex:"1 1 240px" }}>
+                <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+                  {putriList.slice(start, start + 7).map((p, i) => (
+                    <div key={start + i} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 8px", borderRadius:7, background:C.pinkBg, border:`1px solid ${C.border}` }}>
+                      <span style={{ width:20, height:20, borderRadius:"50%", background:C.pink, color:C.white, display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:800, flexShrink:0 }}>
+                        {start + i + 1}
+                      </span>
+                      <input type="text" value={p.name} onChange={e => updateName(setPutriList, start + i, e.target.value)}
+                        style={{ flex:1, border:`1px solid ${C.border}`, borderRadius:5, padding:"4px 6px", fontSize:12, outline:"none", minWidth:0, background:C.white }} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button onClick={doDraw} style={{ width:"100%", padding:"13px", border:"none", borderRadius:11, background:`linear-gradient(135deg,${C.gradeA},${C.pink})`, color:C.white, fontSize:15, fontWeight:800, cursor:"pointer", boxShadow:"0 4px 14px rgba(124,58,237,0.25)" }}>
+            🎲 MULAI KOCOKAN
+          </button>
+          {putraPairs && (
+            <button onClick={handleResetAll} style={{ width:"100%", marginTop:8, padding:"8px", border:`1px solid ${C.border}`, borderRadius:8, background:C.white, color:C.gray, fontSize:12, cursor:"pointer" }}>
+              🗑️ Reset semua data
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ─── DRAW TAB ─── */}
+      {step === "draw" && putraPairs && putriPairs && groups && (
+        <div>
+          <div style={{ display:"flex", gap:6, marginBottom:14, flexWrap:"wrap" }}>
+            <button onClick={() => setStep("input")} style={{ flex:1, padding:"7px", border:`1px solid ${C.border}`, borderRadius:7, background:C.white, cursor:"pointer", fontSize:11, fontWeight:600 }}>✏️ Edit</button>
+            <button onClick={handleRedraw} style={{ flex:1, padding:"7px", border:"none", borderRadius:7, background:C.gradeA, color:C.white, cursor:"pointer", fontSize:11, fontWeight:700 }}>🎲 Acak Ulang</button>
+            <button onClick={() => setStep("schedule")} style={{ flex:1, padding:"7px", border:"none", borderRadius:7, background:C.green, color:C.white, cursor:"pointer", fontSize:11, fontWeight:700 }}>📋 Jadwal →</button>
+          </div>
+          <h3 style={{ fontSize:14, margin:"0 0 8px", color:C.blue }}>🔵 Ganda Putra — {putraPairs.length} Pasang</h3>
+          {[{ key:"putraA", label:`Grup A (${groups.putraA.length})` }, { key:"putraB", label:`Grup B (${groups.putraB.length})` }].map(({ key, label }) => (
+            <div key={key} style={{ marginBottom:12 }}>
+              <span style={{ fontSize:11, fontWeight:700, color:C.blue, background:C.blueBg, padding:"3px 8px", borderRadius:5, display:"inline-block", marginBottom:6 }}>{label}</span>
+              <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+                {groups[key].map(slot => {
+                  const pair = putraPairs[slot.idx];
+                  return (
+                    <div key={slot.idx} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.white, animation: showAnim ? `fadeUp 0.35s ease ${slot.idx * 0.07}s both` : "none", flexWrap:"wrap" }}>
+                      <span style={{ fontWeight:800, fontSize:13, color:C.blue, width:26 }}>{pair.label}</span>
+                      <GradeBadge grade={pair.g1} small /><span style={{ fontSize:12, fontWeight:600 }}>{pair.p1}</span>
+                      <span style={{ color:C.gray, fontSize:11 }}>🤝</span>
+                      <GradeBadge grade={pair.g2} small /><span style={{ fontSize:12, fontWeight:600 }}>{pair.p2}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          <h3 style={{ fontSize:14, margin:"16px 0 8px", color:C.pink }}>🔴 Ganda Putri — 7 Pasang</h3>
+          <div style={{ display:"flex", flexDirection:"column", gap:5, marginBottom:14 }}>
+            {putriPairs.map(pair => (
+              <div key={pair.idx} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.white, animation: showAnim ? `fadeUp 0.35s ease ${pair.idx * 0.07}s both` : "none" }}>
+                <span style={{ fontWeight:800, fontSize:13, color:C.pink, width:26 }}>{pair.label}</span>
+                <span style={{ fontSize:12, fontWeight:600 }}>{pair.p1}</span>
+                <span style={{ color:C.gray, fontSize:11 }}>🤝</span>
+                <span style={{ fontSize:12, fontWeight:600 }}>{pair.p2}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ background:C.blueBg, borderRadius:9, padding:"10px 14px", fontSize:12, border:`1px solid ${C.blue}20` }}>
+            ℹ️ <strong>Putra:</strong> 2 Grup → round-robin → SF → Final (🏆 1-2-3)<br/>
+            <strong>Putri:</strong> Full round-robin → 🏆 1-2-3 dari klasemen<br/>
+            <strong>Jadwal:</strong> Balanced 2 putri + 2 putra per ronde • KO diselingi putri
+          </div>
+        </div>
+      )}
+
+      {/* ─── SCHEDULE TAB ─── */}
+      {step === "schedule" && displayRounds.length > 0 && (
+        <div>
+          <div style={{ display:"flex", gap:6, marginBottom:10, flexWrap:"wrap" }}>
+            {[
+              { v:totalGroupMatches,                   l:"Grup" },
+              { v:"4",                                 l:"Knockout" },
+              { v:"4",                                 l:"Lapangan" },
+              { v:`${completedGroupMatches}/${totalGroupMatches}`, l:"Selesai" }
+            ].map((c, i) => (
+              <div key={i} style={{ flex:"1 1 55px", background:C.grayBg, border:`1px solid ${C.border}`, borderRadius:7, padding:"4px", textAlign:"center" }}>
+                <div style={{ fontSize:14, fontWeight:800 }}>{c.v}</div>
+                <div style={{ fontSize:8, color:C.gray }}>{c.l}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display:"flex", gap:6, marginBottom:14, fontSize:10, color:C.gray, flexWrap:"wrap" }}>
+            {[["Putra",C.blueBg,C.blue],["Putri",C.pinkBg,C.pink],["Knockout",C.koBg,C.ko],["Selesai",C.greenBg,C.green]].map(([l, bg, bd]) => (
+              <div key={l} style={{ display:"flex", alignItems:"center", gap:3 }}>
+                <span style={{ width:10, height:10, borderRadius:3, background:bg, border:`1px solid ${bd}40` }} />
+                {l}
+              </div>
+            ))}
+          </div>
+          {[1, 2].map(day => {
+            const dayRounds = displayRounds.filter(r => r.day === day);
+            if (!dayRounds.length) return null;
+            return (
+              <div key={day} style={{ marginBottom:20 }}>
+                <div style={{ background: day===1 ? C.blueBg : C.pinkBg, border:`1px solid ${(day===1 ? C.blue : C.pink)}20`, borderRadius:9, padding:"8px 12px", marginBottom:10, fontSize:13, fontWeight:700 }}>
+                  📅 Hari {day} <span style={{ fontSize:11, fontWeight:400, color:C.gray }}>20:00–22:00 • {dayRounds.length} ronde • {dayRounds.reduce((s, r) => s + r.slots.length, 0)} match{dayRounds.some(r => r.isKO) ? " (incl. knockout)" : ""}</span>
+                </div>
+                {dayRounds.map((round, ri) => {
+                  const minutesFromStart = ri * 20;
+                  const timeHH = String(Math.floor((20 * 60 + minutesFromStart) / 60)).padStart(2, "0");
+                  const timeMM = String((20 * 60 + minutesFromStart) % 60).padStart(2, "0");
+                  return (
+                    <div key={ri} style={{ marginBottom:12 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:5 }}>
+                        <span style={{ fontSize:11, fontWeight:800, color: round.isKO ? C.ko : C.dark }}>
+                          {round.isKO ? "⚔️ Knockout" : `Ronde ${ri + 1}`}
+                        </span>
+                        <span style={{ fontSize:10, color:C.gray, fontFamily:"monospace" }}>⏱ {timeHH}:{timeMM}</span>
+                        <div style={{ flex:1, borderBottom:`1px dashed ${round.isKO ? C.ko + "40" : C.border}` }} />
+                        <span style={{ fontSize:9, color:C.gray }}>{round.slots.length}/4 lap</span>
+                      </div>
+                      <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+                        {[0, 1, 2, 3].map(ci => (
+                          <CourtCard key={ci} match={round.slots[ci] || null} courtIndex={ci}
+                            onScoreChange={handleScoreChange} getPairInfo={getPairInfo} />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+          {allGroupPutraDone && (
+            <div style={{ background:C.greenBg, border:`1px solid ${C.green}30`, borderRadius:9, padding:"8px 12px", fontSize:12, textAlign:"center" }}>
+              ✅ Grup putra selesai! Buka <strong>⚔️ Knockout</strong>.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── STANDINGS TAB ─── */}
+      {step === "standings" && groups && (
+        <div>
+          {completedGroupMatches === 0 && (
+            <div style={{ background:C.goldBg, border:`1px solid ${C.gold}30`, borderRadius:9, padding:"8px 12px", marginBottom:14, fontSize:12, textAlign:"center" }}>
+              ⚡ Input skor di <strong>Jadwal</strong> — klasemen auto terupdate!
+            </div>
+          )}
+          <h3 style={{ fontSize:14, margin:"0 0 8px", color:C.blue }}>🔵 Ganda Putra — Fase Grup</h3>
+          <p style={{ fontSize:11, color:C.gray, marginBottom:8 }}>
+            2 teratas (<span style={{ background:C.greenBg, padding:"0 4px", borderRadius:3 }}>Q</span>) lolos semifinal
+          </p>
+          <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:18 }}>
+            <StandingsTable title={`Grup A (${groups.putraA.length})`} color={C.blue} colorBg={C.blueBg}
+              teams={groups.putraA} matches={groupMatches.filter(m => m.cat==="putra" && m.pool==="A")}
+              pairMap={pairMap} showQualify />
+            <StandingsTable title={`Grup B (${groups.putraB.length})`} color={C.blue} colorBg={C.blueBg}
+              teams={groups.putraB} matches={groupMatches.filter(m => m.cat==="putra" && m.pool==="B")}
+              pairMap={pairMap} showQualify />
+          </div>
+          <h3 style={{ fontSize:14, margin:"0 0 8px", color:C.pink }}>🔴 Ganda Putri — Full Round Robin</h3>
+          <StandingsTable title="Klasemen Putri (7 pasang • 21 match)" color={C.pink} colorBg={C.pinkBg}
+            teams={groups.putri} matches={groupMatches.filter(m => m.cat==="putri")}
+            pairMap={pairMap} showMedal />
+          <div style={{ marginTop:8, fontSize:11, color:C.gray, textAlign:"center" }}>🏅 Juara 1-2-3 putri dari klasemen</div>
+        </div>
+      )}
+
+      {/* ─── KNOCKOUT TAB ─── */}
+      {step === "knockout" && (
+        <div>
+          <h3 style={{ fontSize:14, margin:"0 0 10px", color:C.blue }}>⚔️ Knockout Ganda Putra</h3>
+          {!allGroupPutraDone && (
+            <div style={{ background:C.goldBg, border:`1px solid ${C.gold}30`, borderRadius:9, padding:"10px 14px", fontSize:12 }}>
+              ⏳ Selesaikan semua match grup putra di <strong>Jadwal</strong> terlebih dahulu.
+            </div>
+          )}
+          {allGroupPutraDone && liveKO && (
+            <div>
+              <div style={{ background:C.blueBg, borderRadius:9, padding:"8px 12px", marginBottom:14, fontSize:11, border:`1px solid ${C.blue}20` }}>
+                <strong>SF1:</strong> {standingsA[0]?.label} vs {standingsB[1]?.label} &nbsp;|&nbsp;
+                <strong>SF2:</strong> {standingsB[0]?.label} vs {standingsA[1]?.label}
+              </div>
+              {[
+                ["sf1",   "🔵 Semifinal 1",       C.blue],
+                ["sf2",   "🔵 Semifinal 2",       C.blue],
+                ["third", "🥉 Perebutan Juara 3",  C.gray],
+                ["final", "🏆 FINAL",             "#f59e0b"]
+              ].map(([key, label, accent]) => {
+                const match = liveKO[key];
+                if (!match) return null;
+                const result = getMatchResult(match);
+                const winnerIsA = result && result.winner === "a";
+                const winnerIsB = result && result.winner === "b";
+                const showSet3 = needsThirdSet(match);
+                const isFinal = key === "final";
+                const pairA = getPairInfo(match.aLabel);
+                const pairB = getPairInfo(match.bLabel);
+                return (
+                  <div key={key} style={{
+                    border:`2px solid ${isFinal ? "#f59e0b" : accent}`, borderRadius:12,
+                    padding:"10px 14px", marginBottom:10,
+                    background: isFinal ? "linear-gradient(135deg,#fef3c7,#fde68a)" : result ? C.greenBg : C.white
+                  }}>
+                    <div style={{ fontSize:11, fontWeight:800, color: isFinal ? "#92400e" : accent, marginBottom:6 }}>{label}</div>
+                    {(!match.aLabel && !match.bLabel)
+                      ? <div style={{ color:"#cbd5e1", fontSize:12 }}>Menunggu hasil Semifinal...</div>
+                      : <div>
+                          <div style={{ display:"flex", alignItems:"center", gap:4, marginBottom:1 }}>
+                            <span style={{ fontSize:13, fontWeight: winnerIsA ? 800 : 600, color: winnerIsA ? C.green : C.dark }}>{match.aLabel}</span>
+                            {winnerIsA && <span style={{ fontSize:10, color:C.green }}>✓</span>}
+                            {pairA && <span style={{ fontSize:9, color:C.gray, marginLeft:4 }}>{pairA.p1} & {pairA.p2}</span>}
+                          </div>
+                          <SetScoreRow label="S1" scoreA={match.s1a} scoreB={match.s1b}
+                            onChangeA={v => handleScoreChange(match.id, "s1a", v)}
+                            onChangeB={v => handleScoreChange(match.id, "s1b", v)} />
+                          <SetScoreRow label="S2" scoreA={match.s2a} scoreB={match.s2b}
+                            onChangeA={v => handleScoreChange(match.id, "s2a", v)}
+                            onChangeB={v => handleScoreChange(match.id, "s2b", v)} />
+                          {showSet3 && (
+                            <SetScoreRow label="S3" scoreA={match.s3a} scoreB={match.s3b}
+                              onChangeA={v => handleScoreChange(match.id, "s3a", v)}
+                              onChangeB={v => handleScoreChange(match.id, "s3b", v)} />
+                          )}
+                          <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:3 }}>
+                            <span style={{ fontSize:13, fontWeight: winnerIsB ? 800 : 600, color: winnerIsB ? C.green : C.dark }}>{match.bLabel}</span>
+                            {winnerIsB && <span style={{ fontSize:10, color:C.green }}>✓</span>}
+                            {pairB && <span style={{ fontSize:9, color:C.gray, marginLeft:4 }}>{pairB.p1} & {pairB.p2}</span>}
+                          </div>
+                        </div>
+                    }
+                  </div>
+                );
+              })}
+              {(() => {
+                const resultFinal = getMatchResult(liveKO.final);
+                const resultThird = getMatchResult(liveKO.third);
+                if (!resultFinal || !resultThird) return null;
+                const champion   = resultFinal.winner === "a" ? liveKO.final.aLabel : liveKO.final.bLabel;
+                const runnerUp   = resultFinal.winner === "a" ? liveKO.final.bLabel : liveKO.final.aLabel;
+                const thirdPlace = resultThird.winner === "a" ? liveKO.third.aLabel : liveKO.third.bLabel;
+                return (
+                  <div style={{ marginTop:12, background:"linear-gradient(135deg,#fef3c7,#fde68a)", borderRadius:12, padding:"16px 20px", border:"2px solid #f59e0b", textAlign:"center" }}>
+                    <div style={{ fontSize:16, fontWeight:800, color:"#92400e", marginBottom:8 }}>🏆 Hasil Akhir Putra</div>
+                    {[[champion,"🥇 Juara 1"],[runnerUp,"🥈 Juara 2"],[thirdPlace,"🥉 Juara 3"]].map(([lbl, title]) => {
+                      const pr = getPairInfo(lbl);
+                      return (
+                        <div key={title} style={{ marginBottom:3, fontSize:13 }}>
+                          <strong>{title}:</strong> {lbl}{pr ? ` — ${pr.p1} & ${pr.p2}` : ""}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── RULES TAB ─── */}
+      {step === "rules" && (
+        <div style={{ fontSize:13, lineHeight:1.7 }}>
+          <div style={{ background:C.goldBg, border:`1px solid ${C.gold}30`, borderRadius:10, padding:"14px 16px", marginBottom:14 }}>
+            <h3 style={{ margin:"0 0 6px", fontSize:15, color:C.gold }}>⚙️ Sistem Poin</h3>
+            <div style={{ display:"flex", gap:14, flexWrap:"wrap" }}>
+              {[{ v:"2", l:"MENANG", c:C.green },{ v:"1", l:"KALAH", c:"#dc2626" },{ v:"0", l:"WO", c:C.gray }].map((x, i) => (
+                <div key={i} style={{ textAlign:"center", flex:"1 1 60px" }}>
+                  <div style={{ fontSize:26, fontWeight:800, color:x.c }}>{x.v}</div>
+                  <div style={{ fontSize:10, color:C.gray }}>poin {x.l}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          {[
+            { t:"📏 Format Match 2×11",  bg:C.grayBg, bd:C.gray, items:[["Format","Best of 3 set ke 11"],["Set 3","Dimainkan jika kedudukan 1-1"],["Deuce","10-10 → unggul 2 poin, maksimal 15"]] },
+            { t:"🔵 Ganda Putra",         bg:C.blueBg, bd:C.blue, items:[["Fase Grup","Grup A (5 pasang) & Grup B (4 pasang) round-robin"],["Semifinal","Juara A vs RU B, Juara B vs RU A"],["Final","+ Perebutan Juara 3"]] },
+            { t:"🔴 Ganda Putri",         bg:C.pinkBg, bd:C.pink, items:[["Format","Full round-robin 7 pasang (21 match)"],["Juara","Posisi 1-2-3 dari klasemen akhir"]] },
+            { t:"📅 Jadwal",              bg:C.grayBg, bd:C.gray, items:[["Waktu","20:00–22:00, 2 hari"],["Distribusi","~2 putri + 2 putra per ronde (4 lapangan penuh)"],["Knockout","Diselingi match putri agar ada jeda bagi pemain putra"]] },
+            { t:"🏅 Tiebreaker Klasemen", bg:C.grayBg, bd:C.gray, items:[["1.","Poin (Menang=2, Kalah=1, WO=0)"],["2.","Selisih set"],["3.","Selisih poin"],["4.","Head-to-head"]] },
+          ].map(sec => (
+            <div key={sec.t} style={{ background:sec.bg, borderRadius:10, padding:"12px 16px", marginBottom:12, border:`1px solid ${sec.bd}18` }}>
+              <h3 style={{ margin:"0 0 8px", fontSize:14 }}>{sec.t}</h3>
+              {sec.items.map(([k, v], i) => (
+                <p key={i} style={{ margin:"0 0 4px" }}><strong>{k}</strong> — {v}</p>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Footer */}
+      <div style={{ marginTop:18, paddingTop:10, borderTop:`1px solid ${C.border}`, fontSize:10, color:C.gray, textAlign:"center" }}>
+        Liga Badminton • 4 Lapangan • 2 Hari (20–22) • 2×11 Rally Point • {totalGroupMatches} Grup + 4 KO
+        {putraPairs && (
+          <span> • <span style={{ color:C.green }}>💾 Auto-save aktif</span></span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
